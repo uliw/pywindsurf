@@ -47,7 +47,7 @@ git clone https://github.com/uliw/pywindsurf.git
 cd pywindsurf
 pip install -e .
 ```
-This registers the command-line executables `pywindsurf` and `pywindsurf-gui` directly in your terminal path.
+This registers the command-line executables `pywindsurf` and `pywindsurf_gui` directly in your terminal path.
 
 ### Prerequisites
 Make sure Python 3.9+ is installed on your system.

@@ -297,7 +297,7 @@ def index(client: Client):
     auto_detect_tcx()
 
 def main():
-    ui.run(title='PyWindsurf GPS Analytics', port=8080, show=True)
+    ui.run(title='PyWindsurf GPS Analytics', port=8080, show=True, reload=False)
 
 # Run NiceGUI App
 if __name__ in {'__main__', '__mp_main__'}:
