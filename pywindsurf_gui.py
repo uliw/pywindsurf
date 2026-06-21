@@ -212,8 +212,8 @@ def index(client: Client):
     with ui.row().classes('w-full h-screen gap-0 wrap-none overflow-hidden bg-zinc-950 text-zinc-100'):
         # 1. SIDEBAR PANEL (Controls)
         with ui.column().classes('w-[320px] h-full p-4 border-r border-zinc-800 bg-zinc-900/40 shrink-0 gap-4 overflow-y-auto'):
-            # Header branding
-            with ui.row().classes('items-center gap-2 mb-2'):
+            # Header branding linked to GitHub project
+            with ui.link('', 'https://github.com/uliw/pywindsurf', new_tab=True).classes('flex items-center gap-2 mb-2 no-underline hover:opacity-85 transition-opacity text-zinc-100'):
                 ui.icon('sailing', color='info').classes('text-3xl')
                 with ui.column().classes('gap-0'):
                     ui.label('PyWindsurf').classes('text-lg font-bold text-white leading-none')
@@ -278,18 +278,20 @@ def index(client: Client):
                 run_btn = ui.button('Run Analysis', icon='play_arrow', on_click=lambda: run_analysis())\
                     .props('color=info icon-right').classes('grow rounded-xl py-2 font-bold')
 
-        # 2. MAP AREA (Middle, takes remaining available space)
-        with ui.column().classes('grow h-full p-4 gap-0'):
-            map_container = ui.column().classes('w-full h-full border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-950')
-            with map_container:
-                map_iframe = ui.element('iframe').classes('w-full h-full border-none bg-zinc-950')
-                map_iframe.props(f'src="/map/{session_id}"')
+        # 2. MAIN DISPLAY CONTAINER (Map + Log, dynamically scales to remaining screen width)
+        with ui.row().classes('grow h-full gap-0 wrap-none overflow-hidden'):
+            # Map Column (takes 60% of remaining space)
+            with ui.column().classes('w-3/5 h-full p-4 gap-0'):
+                map_container = ui.column().classes('w-full h-full border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-950')
+                with map_container:
+                    map_iframe = ui.element('iframe').classes('w-full h-full border-none bg-zinc-950')
+                    map_iframe.props(f'src="/map/{session_id}"')
 
-        # 3. CONSOLE LOG PANEL (Right sidebar)
-        with ui.column().classes('w-[530px] h-full p-4 border-l border-zinc-800 bg-zinc-900/10 shrink-0 overflow-hidden flex flex-col gap-2'):
-            ui.label('Analysis Output').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wider')
-            log_viewer = ui.log().classes('w-full grow font-mono text-[11px] text-emerald-400 bg-zinc-950 p-3 rounded-xl border border-zinc-800')
-            log_viewer.push("System Initialized. Awaiting TCX analysis execution...")
+            # Log Column (takes 40% of remaining space)
+            with ui.column().classes('w-2/5 h-full p-4 border-l border-zinc-800 bg-zinc-900/10 overflow-hidden flex flex-col gap-2'):
+                ui.label('Analysis Output').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wider')
+                log_viewer = ui.log().classes('w-full grow font-mono text-[11px] text-emerald-400 bg-zinc-950 p-3 rounded-xl border border-zinc-800')
+                log_viewer.push("System Initialized. Awaiting TCX analysis execution...")
 
     # Run auto-detect
     auto_detect_tcx()
