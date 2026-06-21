@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi.responses import HTMLResponse
 
 from nicegui import ui, app, run, Client
-from pywindsurf import analyze_tcx, format_duration
+from pywindsurf import analyze_tcx
 
 # Cleanup any orphaned map files from previous crashes on server startup
 def cleanup_orphaned_maps():
@@ -21,17 +21,6 @@ def cleanup_orphaned_maps():
                 pass
 
 cleanup_orphaned_maps()
-
-# Dashboard Metric Card helper
-def metric_card(title: str, value: str = '', subtext: str = '', icon: str = None):
-    with ui.card().classes('bg-zinc-900 border border-zinc-800/80 shadow-sm p-4 rounded-xl flex flex-col justify-between h-[110px] grow min-w-[210px]'):
-        with ui.row().classes('justify-between items-center w-full'):
-            ui.label(title).classes('text-[10px] font-semibold text-zinc-500 uppercase tracking-wider')
-            if icon:
-                ui.icon(icon, color='info').classes('text-lg')
-        value_label = ui.label(value).classes('text-xl font-bold text-white mt-1')
-        sub_label = ui.label(subtext).classes('text-[10px] text-zinc-500 mt-1 truncate')
-    return value_label, sub_label
 
 # Custom FastAPI Map Serving Route (serves isolated map files per session)
 @app.get('/map/{session_id}')
@@ -63,10 +52,86 @@ def get_map(session_id: str):
         </div>
     """)
 
+# Custom Local File Picker Dialog
+class LocalFilePicker(ui.dialog):
+    def __init__(self, directory: str = '.', suffix: str = '.tcx', on_select=None) -> None:
+        super().__init__()
+        self.path = os.path.abspath(directory)
+        self.suffix = suffix
+        self.on_select = on_select
+        
+        with self, ui.card().classes('w-[500px] h-[600px] flex flex-col bg-zinc-900 border border-zinc-800 text-zinc-100'):
+            with ui.row().classes('w-full items-center justify-between border-b border-zinc-800 pb-2'):
+                ui.label('Select TCX File').classes('text-lg font-bold text-white')
+                ui.button(icon='close', on_click=self.close).props('flat dense').classes('text-zinc-400')
+                
+            with ui.row().classes('w-full items-center gap-2 py-2'):
+                ui.button(icon='arrow_upward', on_click=self.go_up).props('flat dense').classes('text-zinc-400').tooltip('Go up one directory')
+                self.path_label = ui.label(self.path).classes('text-xs font-mono truncate grow text-zinc-400')
+                
+            self.list_container = ui.column().classes('w-full grow overflow-y-auto gap-1 border border-zinc-800 rounded p-2 bg-zinc-950')
+            self.update_list()
+            
+    def update_list(self):
+        self.list_container.clear()
+        self.path_label.text = self.path
+        
+        try:
+            items = os.listdir(self.path)
+        except Exception as e:
+            with self.list_container:
+                ui.label(f'Error reading directory: {e}').classes('text-red-500 text-xs p-2')
+            return
+            
+        folders = []
+        files = []
+        for item in items:
+            full_path = os.path.join(self.path, item)
+            if os.path.isdir(full_path):
+                folders.append(item)
+            elif os.path.isfile(full_path) and item.lower().endswith(self.suffix.lower()):
+                files.append(item)
+                
+        folders.sort()
+        files.sort()
+        
+        with self.list_container:
+            if not folders and not files:
+                ui.label('No folders or .tcx files found.').classes('text-zinc-600 italic text-sm p-4 text-center w-full')
+                
+            for folder in folders:
+                with ui.row().classes('w-full items-center hover:bg-zinc-850 p-2 rounded cursor-pointer gap-2') \
+                        .on('click', lambda _, f=folder: self.navigate_to(f)):
+                    ui.icon('folder', color='primary').classes('text-xl')
+                    ui.label(folder).classes('grow truncate text-sm text-zinc-300')
+                    
+            for file in files:
+                with ui.row().classes('w-full items-center hover:bg-zinc-850 p-2 rounded cursor-pointer gap-2') \
+                        .on('click', lambda _, f=file: self.select_file(f)):
+                    ui.icon('insert_drive_file', color='secondary').classes('text-xl')
+                    ui.label(file).classes('grow truncate text-sm text-zinc-300')
+                    ui.button(icon='check', on_click=lambda _, f=file: self.select_file(f)).props('flat dense').classes('text-emerald-500')
+
+    def navigate_to(self, folder_name: str):
+        self.path = os.path.abspath(os.path.join(self.path, folder_name))
+        self.update_list()
+        
+    def go_up(self):
+        parent = os.path.dirname(self.path)
+        if parent != self.path:  # Prevent infinite loop at root
+            self.path = parent
+            self.update_list()
+            
+    def select_file(self, file_name: str):
+        full_path = os.path.join(self.path, file_name)
+        if self.on_select:
+            self.on_select(full_path)
+        self.close()
+
 # Main Per-Session Page Function
 @ui.page('/')
 def index(client: Client):
-    # Custom Styling Elements (inside page scope)
+    # Custom Styling Elements (inside page scope to satisfy NiceGUI decorator rules)
     ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">')
     ui.query('body').style('font-family: "Inter", sans-serif;')
 
@@ -86,65 +151,6 @@ def index(client: Client):
             except Exception:
                 pass
     client.on_disconnect(cleanup_map)
-    
-    # Local references to labels in this user's stats dashboard
-    stats_labels = {}
-    stats_placeholder = None
-    stats_grid = None
-    stats_threshold_title = None
-
-    # Update Dashboard Statistics (called inside run_analysis)
-    def update_dashboard(results):
-        if not results:
-            stats_placeholder.classes(remove='hidden')
-            stats_grid.classes('hidden')
-            return
-            
-        # 1. Update Overview
-        dist_km = results['total_length'] / 1000
-        stats_labels['dist_val'].text = f"{dist_km:.3f} km"
-        stats_labels['dist_sub'].text = f"{results['total_length']:.2f} meters"
-        
-        dur_str = format_duration(results['total_duration'])
-        stats_labels['dur_val'].text = dur_str
-        stats_labels['dur_sub'].text = f"{results['total_duration']:.0f} seconds"
-        
-        cal_val = f"{results['total_calories']} kcal" if results['total_calories'] is not None else "N/A"
-        stats_labels['cal_val'].text = cal_val
-        stats_labels['cal_sub'].text = 'Estimated calories burned' if results['total_calories'] is not None else 'No calorie data'
-        
-        stats_labels['legs_val'].text = str(results['num_legs'])
-        stats_labels['legs_sub'].text = f"Segmentation: {scheme.value.title()}"
-        
-        # 2. Update Speed Analysis
-        unit_lbl = results['speed_unit']
-        stats_labels['speed_50_val'].text = f"{results['fastest_50']['speed']:.2f} {unit_lbl}"
-        stats_labels['speed_50_sub'].text = f"Duration: {results['fastest_50']['duration']:.2f}s"
-        
-        stats_labels['speed_100_val'].text = f"{results['fastest_100']['speed']:.2f} {unit_lbl}"
-        stats_labels['speed_100_sub'].text = f"Duration: {results['fastest_100']['duration']:.2f}s"
-        
-        stats_labels['speed_500_val'].text = f"{results['fastest_500']['speed']:.2f} {unit_lbl}"
-        stats_labels['speed_500_sub'].text = f"Duration: {results['fastest_500']['duration']:.2f}s"
-        
-        # 3. Update Thresholds
-        stats_threshold_title.text = f"Threshold Statistics (Cutoff: {cutoff_speed.value} {unit_lbl})"
-        
-        stats_labels['thresh_dur_above_val'].text = format_duration(results['duration_above'])
-        stats_labels['thresh_dur_above_sub'].text = f"{results['duration_above']:.0f}s active speed time"
-        
-        stats_labels['thresh_dist_above_val'].text = f"{results['dist_above'] / 1000:.3f} km"
-        stats_labels['thresh_dist_above_sub'].text = f"{results['dist_above']:.2f}m active distance"
-        
-        stats_labels['thresh_dur_below_val'].text = format_duration(results['duration_below'])
-        stats_labels['thresh_dur_below_sub'].text = f"{results['duration_below']:.0f}s resting speed time"
-        
-        stats_labels['thresh_dist_below_val'].text = f"{results['dist_below'] / 1000:.3f} km"
-        stats_labels['thresh_dist_below_sub'].text = f"{results['dist_below']:.2f}m resting distance"
-        
-        # Toggle Visibility using CSS classes (avoids virtual DOM diffing errors)
-        stats_placeholder.classes('hidden')
-        stats_grid.classes(remove='hidden')
 
     # Run TCX Analysis Async/Thread
     async def run_analysis():
@@ -177,14 +183,13 @@ def index(client: Client):
             # Run inside a CPU-bound/IO-bound thread pool to avoid blocking the event loop
             f = io.StringIO()
             with contextlib.redirect_stdout(f):
-                results = await run.io_bound(analyze_tcx, **params)
+                await run.io_bound(analyze_tcx, **params)
                 
             stdout_content = f.getvalue()
             for line in stdout_content.splitlines():
                 log_viewer.push(line)
                 
             # Update components
-            update_dashboard(results)
             map_iframe.props(f'src="/map/{session_id}?t={time.time()}"')
             map_iframe.update()
             
@@ -205,8 +210,8 @@ def index(client: Client):
 
     # Build the layout
     with ui.row().classes('w-full h-screen gap-0 wrap-none overflow-hidden bg-zinc-950 text-zinc-100'):
-        # SIDEBAR PANEL (Controls)
-        with ui.column().classes('w-[360px] h-full p-4 border-r border-zinc-800 bg-zinc-900/40 shrink-0 gap-4 overflow-y-auto'):
+        # 1. SIDEBAR PANEL (Controls)
+        with ui.column().classes('w-[320px] h-full p-4 border-r border-zinc-800 bg-zinc-900/40 shrink-0 gap-4 overflow-y-auto'):
             # Header branding
             with ui.row().classes('items-center gap-2 mb-2'):
                 ui.icon('sailing', color='info').classes('text-3xl')
@@ -273,59 +278,18 @@ def index(client: Client):
                 run_btn = ui.button('Run Analysis', icon='play_arrow', on_click=lambda: run_analysis())\
                     .props('color=info icon-right').classes('grow rounded-xl py-2 font-bold')
 
-        # MAIN RESULT PANEL
-        with ui.column().classes('grow h-full bg-zinc-950 overflow-hidden gap-0'):
-            # Tabs navigation
-            with ui.tabs().classes('w-full border-b border-zinc-800 bg-zinc-900/30 text-zinc-400') as tabs:
-                map_tab = ui.tab('Map Viewer', icon='map')
-                stats_tab = ui.tab('Stats Dashboard', icon='analytics')
-                log_tab = ui.tab('Console Log', icon='terminal')
-                
-            with ui.tab_panels(tabs, value=map_tab).classes('w-full grow bg-transparent overflow-hidden'):
-                # MAP TAB
-                with ui.tab_panel(map_tab).classes('p-0 h-full w-full overflow-hidden bg-zinc-950'):
-                    map_container = ui.column().classes('w-full h-full p-0 gap-0')
-                    with map_container:
-                        map_iframe = ui.element('iframe').classes('w-full h-full border-none bg-zinc-950')
-                        map_iframe.props(f'src="/map/{session_id}"')
-                        
-                # STATS DASHBOARD TAB
-                with ui.tab_panel(stats_tab).classes('p-6 h-full overflow-y-auto bg-zinc-950'):
-                    stats_placeholder = ui.label('No session analyzed yet. Select a file and click "Run Analysis" to view statistics.') \
-                        .classes('text-zinc-500 italic p-12 text-center w-full')
-                    
-                    stats_grid = ui.column().classes('w-full gap-4 pb-12 hidden')
-                    
-                    with stats_grid:
-                        ui.label('Session Overview').classes('text-sm font-bold text-zinc-300 mb-1')
-                        with ui.row().classes('w-full gap-4 wrap'):
-                            stats_labels['dist_val'], stats_labels['dist_sub'] = metric_card('Total Distance', icon='explore')
-                            stats_labels['dur_val'], stats_labels['dur_sub'] = metric_card('Total Duration', icon='schedule')
-                            stats_labels['cal_val'], stats_labels['cal_sub'] = metric_card('Energy Burned', icon='local_fire_department')
-                            stats_labels['legs_val'], stats_labels['legs_sub'] = metric_card('Total Legs', icon='navigation')
-                            
-                        ui.separator().classes('my-4 border-zinc-800')
-                        
-                        ui.label('Speed Analysis').classes('text-sm font-bold text-zinc-300 mb-1')
-                        with ui.row().classes('w-full gap-4 wrap'):
-                            stats_labels['speed_50_val'], stats_labels['speed_50_sub'] = metric_card('Fastest 50m', icon='speed')
-                            stats_labels['speed_100_val'], stats_labels['speed_100_sub'] = metric_card('Fastest 100m', icon='speed')
-                            stats_labels['speed_500_val'], stats_labels['speed_500_sub'] = metric_card('Fastest 500m', icon='speed')
-                            
-                        ui.separator().classes('my-4 border-zinc-800')
-                        
-                        stats_threshold_title = ui.label("Threshold Statistics").classes('text-sm font-bold text-zinc-300 mb-1')
-                        with ui.row().classes('w-full gap-4 wrap'):
-                            stats_labels['thresh_dur_above_val'], stats_labels['thresh_dur_above_sub'] = metric_card("Duration > Cutoff", icon='trending_up')
-                            stats_labels['thresh_dist_above_val'], stats_labels['thresh_dist_above_sub'] = metric_card("Distance > Cutoff", icon='leaderboard')
-                            stats_labels['thresh_dur_below_val'], stats_labels['thresh_dur_below_sub'] = metric_card("Duration <= Cutoff", icon='trending_down')
-                            stats_labels['thresh_dist_below_val'], stats_labels['thresh_dist_below_sub'] = metric_card("Distance <= Cutoff", icon='location_off')
-                        
-                # CONSOLE LOG TAB
-                with ui.tab_panel(log_tab).classes('p-4 h-full overflow-hidden bg-zinc-950 flex flex-col'):
-                    with ui.column().classes('w-full grow overflow-hidden bg-zinc-950 rounded-xl border border-zinc-800 p-2'):
-                        log_viewer = ui.log().classes('w-full h-full font-mono text-[11px] text-emerald-400 bg-zinc-950 p-2 border-none')
-                        log_viewer.push("System Initialized. Awaiting TCX analysis execution...")
+        # 2. MAP AREA (Middle, takes remaining available space)
+        with ui.column().classes('grow h-full p-4 gap-0'):
+            map_container = ui.column().classes('w-full h-full border border-zinc-800 rounded-2xl overflow-hidden bg-zinc-950')
+            with map_container:
+                map_iframe = ui.element('iframe').classes('w-full h-full border-none bg-zinc-950')
+                map_iframe.props(f'src="/map/{session_id}"')
+
+        # 3. CONSOLE LOG PANEL (Right sidebar)
+        with ui.column().classes('w-[530px] h-full p-4 border-l border-zinc-800 bg-zinc-900/10 shrink-0 overflow-hidden flex flex-col gap-2'):
+            ui.label('Analysis Output').classes('text-xs font-semibold text-zinc-400 uppercase tracking-wider')
+            log_viewer = ui.log().classes('w-full grow font-mono text-[11px] text-emerald-400 bg-zinc-950 p-3 rounded-xl border border-zinc-800')
+            log_viewer.push("System Initialized. Awaiting TCX analysis execution...")
 
     # Run auto-detect
     auto_detect_tcx()
