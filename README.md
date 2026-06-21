@@ -35,14 +35,22 @@ Note: To export track files from your Apple Watch, you need third party software
 
 ## Installation
 
-### Prerequisites
-Make sure Python 3.8+ is installed on your system.
-
-### Install Dependencies
-Run the following command to install the required libraries:
+### Method 1: Install from PyPI (when published)
 ```bash
-pip install nicegui folium pywebview pyinstaller
+pip install pywindsurf
 ```
+
+### Method 2: Local Installation (Development Mode)
+Clone the repository and install it in editable mode from the project root:
+```bash
+git clone https://github.com/uliw/pywindsurf.git
+cd pywindsurf
+pip install -e .
+```
+This registers the command-line executables `pywindsurf` and `pywindsurf-gui` directly in your terminal path.
+
+### Prerequisites
+Make sure Python 3.9+ is installed on your system.
 
 ---
 
